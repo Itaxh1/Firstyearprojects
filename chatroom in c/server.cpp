@@ -4,6 +4,6 @@
 
 int main()
 {
-  cout<<"code under devolopment"
+  cout<<"code under devolopment";
   return 0;
 }
