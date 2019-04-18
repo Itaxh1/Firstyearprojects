@@ -1,82 +1,161 @@
-
+#include <winsock2.h>
+#include <ws2tcpip.h>
 #include <iostream>
 #include <string>
-#include <stdio.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <string.h>
-#include <netdb.h>
-#include <sys/uio.h>
-#include <sys/time.h>
-#include <sys/wait.h>
-#include <fcntl.h>
-#include <fstream>
+#include <thread>
+ 
 using namespace std;
-//Client side
-int main(int argc, char *argv[])
+ 
+#pragma comment (lib, "Ws2_32.lib")
+ 
+#define DEFAULT_BUFLEN 512            
+#define IP_ADDRESS "192.168.56.1"
+#define DEFAULT_PORT "3504"
+ 
+struct client_type
 {
-    //we need 2 things: ip address and port number, in that order
-    if(argc != 3)
+    SOCKET socket;
+    int id;
+    char received_message[DEFAULT_BUFLEN];
+};
+ 
+int process_client(client_type &new_client);
+int main();
+ 
+int process_client(client_type &new_client)
+{
+    while (1)
     {
-        cerr << "Usage: ip_address port" << endl; exit(0); 
-    } //grab the IP address and port number 
-    char *serverIp = argv[1]; int port = atoi(argv[2]); 
-    //create a message buffer 
-    char msg[1500]; 
-    //setup a socket and connection tools 
-    struct hostent* host = gethostbyname(serverIp); 
-    sockaddr_in sendSockAddr;   
-    bzero((char*)&sendSockAddr, sizeof(sendSockAddr)); 
-    sendSockAddr.sin_family = AF_INET; 
-    sendSockAddr.sin_addr.s_addr = 
-        inet_addr(inet_ntoa(*(struct in_addr*)*host->h_addr_list));
-    sendSockAddr.sin_port = htons(port);
-    int clientSd = socket(AF_INET, SOCK_STREAM, 0);
-    //try to connect...
-    int status = connect(clientSd,
-                         (sockaddr*) &sendSockAddr, sizeof(sendSockAddr));
-    if(status < 0)
-    {
-        cout<<"Error connecting to socket!"<<endl; break;
-    }
-    cout << "Connected to the server!" << endl;
-    int bytesRead, bytesWritten = 0;
-    struct timeval start1, end1;
-    gettimeofday(&start1, NULL);
-    while(1)
-    {
-        cout << ">";
-        string data;
-        getline(cin, data);
-        memset(&msg, 0, sizeof(msg));//clear the buffer
-        strcpy(msg, data.c_str());
-        if(data == "exit")
+        memset(new_client.received_message, 0, DEFAULT_BUFLEN);
+ 
+        if (new_client.socket != 0)
         {
-            send(clientSd, (char*)&msg, strlen(msg), 0);
-            break;
+            int iResult = recv(new_client.socket, new_client.received_message, DEFAULT_BUFLEN, 0);
+ 
+            if (iResult != SOCKET_ERROR)
+                cout << new_client.received_message << endl;
+            else
+            {
+                cout << "recv() failed: " << WSAGetLastError() << endl;
+                break;
+            }
         }
-        bytesWritten += send(clientSd, (char*)&msg, strlen(msg), 0);
-        cout << "Awaiting server response..." << endl;
-        memset(&msg, 0, sizeof(msg));//clear the buffer
-        bytesRead += recv(clientSd, (char*)&msg, sizeof(msg), 0);
-        if(!strcmp(msg, "exit"))
-        {
-            cout << "Server has quit the session" << endl;
-            break;
-        }
-        cout << "Server: " << msg << endl;
     }
-    gettimeofday(&end1, NULL);
-    close(clientSd);
-    cout << "********Session********" << endl;
-    cout << "Bytes written: " << bytesWritten << 
-    " Bytes read: " << bytesRead << endl;
-    cout << "Elapsed time: " << (end1.tv_sec- start1.tv_sec) 
-      << " secs" << endl;
-    cout << "Connection closed" << endl;
-    return 0;    
+ 
+    if (WSAGetLastError() == WSAECONNRESET)
+        cout << "The server has disconnected" << endl;
+ 
+    return 0;
+}
+ 
+int main()
+{
+    WSAData wsa_data;
+    struct addrinfo *result = NULL, *ptr = NULL, hints;
+    string sent_message = "";
+    client_type client = { INVALID_SOCKET, -1, "" };
+    int iResult = 0;
+    string message;
+ 
+    cout << "Starting Client...\n";
+ 
+    // Initialize Winsock
+    iResult = WSAStartup(MAKEWORD(2, 2), &wsa_data);
+    if (iResult != 0) {
+        cout << "WSAStartup() failed with error: " << iResult << endl;
+        return 1;
+    }
+ 
+    ZeroMemory(&hints, sizeof(hints));
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_protocol = IPPROTO_TCP;
+ 
+    cout << "Connecting...\n";
+ 
+    // Resolve the server address and port
+    iResult = getaddrinfo(static_cast<LPCTSTR>(IP_ADDRESS), DEFAULT_PORT, &hints, &result);
+    if (iResult != 0) {
+        cout << "getaddrinfo() failed with error: " << iResult << endl;
+        WSACleanup();
+        system("pause");
+        return 1;
+    }
+ 
+    // Attempt to connect to an address until one succeeds
+    for (ptr = result; ptr != NULL; ptr = ptr->ai_next) {
+ 
+        // Create a SOCKET for connecting to server
+        client.socket = socket(ptr->ai_family, ptr->ai_socktype,
+            ptr->ai_protocol);
+        if (client.socket == INVALID_SOCKET) {
+            cout << "socket() failed with error: " << WSAGetLastError() << endl;
+            WSACleanup();
+            system("pause");
+            return 1;
+        }
+ 
+        // Connect to server.
+        iResult = connect(client.socket, ptr->ai_addr, (int)ptr->ai_addrlen);
+        if (iResult == SOCKET_ERROR) {
+            closesocket(client.socket);
+            client.socket = INVALID_SOCKET;
+            continue;
+        }
+        break;
+    }
+ 
+    freeaddrinfo(result);
+ 
+    if (client.socket == INVALID_SOCKET) {
+        cout << "Unable to connect to server!" << endl;
+        WSACleanup();
+        system("pause");
+        return 1;
+    }
+ 
+    cout << "Successfully Connected" << endl;
+ 
+    //Obtain id from server for this client;
+    recv(client.socket, client.received_message, DEFAULT_BUFLEN, 0);
+    message = client.received_message;
+ 
+    if (message != "Server is full")
+    {
+        client.id = atoi(client.received_message);
+ 
+        thread my_thread(process_client, client);
+ 
+        while (1)
+        {
+            getline(cin, sent_message);
+            iResult = send(client.socket, sent_message.c_str(), strlen(sent_message.c_str()), 0);
+ 
+            if (iResult <= 0)
+            {
+                cout << "send() failed: " << WSAGetLastError() << endl;
+                break;
+            }
+        }
+ 
+        //Shutdown the connection since no more data will be sent
+        my_thread.detach();
+    }
+    else
+        cout << client.received_message << endl;
+ 
+    cout << "Shutting down socket..." << endl;
+    iResult = shutdown(client.socket, SD_SEND);
+    if (iResult == SOCKET_ERROR) {
+        cout << "shutdown() failed with error: " << WSAGetLastError() << endl;
+        closesocket(client.socket);
+        WSACleanup();
+        system("pause");
+        return 1;
+    }
+ 
+    closesocket(client.socket);
+    WSACleanup();
+    system("pause");
+    return 0;
 }
